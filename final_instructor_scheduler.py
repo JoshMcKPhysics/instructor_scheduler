@@ -849,7 +849,14 @@ for week in cal.monthdatescalendar(
                                     if st.button("Inactive", key=f"clear_{day}_{instructor}"):
                                         if f"{day}|{instructor}" in st.session_state.selected:
                                             del st.session_state.selected[f"{day}|{instructor}"]
-                                        # Rerun immediately so the UI updates and turns the tile back to gray/yellow
+                                        
+                                        # Also clean up any stored time range for this tile
+                                        if "assigned_time_ranges" in st.session_state:
+                                            st.session_state.assigned_time_ranges.pop(key, None)
+                                            
+                                        # --- ADD THIS LINE SO IT SAVES TO SUPABASE ---
+                                        save_to_db()
+                                        
                                         st.rerun()
 
                                 start_t = hour_mapping[start_label]
