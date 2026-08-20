@@ -242,16 +242,17 @@ if "admin_bypass" not in st.session_state:
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
-# ---------- ADMIN AUTHENTICATION ----------
+if "show_password_input" not in st.session_state:
+    st.session_state.show_password_input = False
 
 if LOCAL_DEV:
-    # In local dev, provide an explicit local-only toggle button
+    # Quick local dev toggle button
     if "local_enable_admin" not in st.session_state:
         st.session_state.local_enable_admin = False
 
     if st.session_state.local_enable_admin:
         st.session_state.is_admin = True
-        if st.button("Disable Admin (local)") :
+        if st.button("Disable Admin (local)"):
             st.session_state.local_enable_admin = False
             st.session_state.is_admin = False
             st.rerun()
@@ -261,25 +262,36 @@ if LOCAL_DEV:
             st.session_state.is_admin = True
             st.rerun()
 else:
-    # Production login: compact password input and check
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        password = st.text_input(
-            "Admin Password",
-            type="password",
-            key="production_admin_pwd"
-        )
-    
-    # Read admin passwords from Streamlit secrets when available
-    current_admin_pwd = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
-    current_josh_pwd = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
+    # Production login flow
+    if not st.session_state.is_admin:
+        if not st.session_state.show_password_input:
+            if st.button("Admin Login"):
+                st.session_state.show_password_input = True
+                st.rerun()
+        else:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                password = st.text_input(
+                    "Admin Password",
+                    type="password",
+                    key="production_admin_pwd"
+                )
+            with col2:
+                if st.button("Cancel"):
+                    st.session_state.show_password_input = False
+                    st.rerun()
 
-    st.session_state.is_admin = (
-        password in {
-            current_admin_pwd,
-            current_josh_pwd
-        }
-    )
+            current_admin_pwd = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
+            current_josh_pwd = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
+
+            if password in {current_admin_pwd, current_josh_pwd}:
+                st.session_state.is_admin = True
+                st.session_state.show_password_input = False
+                st.rerun()
+    else:
+        if st.button("Log Out Admin"):
+            st.session_state.is_admin = False
+            st.rerun()
 
 # ---------- RULES ----------
 
