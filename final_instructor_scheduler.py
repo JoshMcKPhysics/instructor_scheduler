@@ -242,48 +242,44 @@ if "admin_bypass" not in st.session_state:
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
-with st.sidebar:
-    if LOCAL_DEV:
-        # Local development override switch
-        if "local_enable_admin" not in st.session_state:
+# ---------- ADMIN AUTHENTICATION ----------
+
+if LOCAL_DEV:
+    # In local dev, provide an explicit local-only toggle button
+    if "local_enable_admin" not in st.session_state:
+        st.session_state.local_enable_admin = False
+
+    if st.session_state.local_enable_admin:
+        st.session_state.is_admin = True
+        if st.button("Disable Admin (local)") :
             st.session_state.local_enable_admin = False
-
-        if st.session_state.local_enable_admin:
-            st.session_state.is_admin = True
-            st.success("Local dev: admin mode ENABLED")
-            if st.button("Disable Admin (local)"):
-                st.session_state.local_enable_admin = False
-                st.session_state.is_admin = False
-                st.rerun()
-        else:
-            st.info("Local dev: admin mode disabled")
-            if st.button("Enable Admin (local)"):
-                st.session_state.local_enable_admin = True
-                st.session_state.is_admin = True
-                st.rerun()
+            st.session_state.is_admin = False
+            st.rerun()
     else:
-        # Production login via password expander in sidebar
-        if not st.session_state.is_admin:
-            with st.expander("🔑 Admin Login"):
-                password_input = st.text_input(
-                    "Enter Password",
-                    type="password",
-                    key="sidebar_admin_pwd"
-                )
-                if st.button("Log In"):
-                    current_admin_pwd = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
-                    current_josh_pwd = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
+        if st.button("Enable Admin (local)"):
+            st.session_state.local_enable_admin = True
+            st.session_state.is_admin = True
+            st.rerun()
+else:
+    # Production login: compact password input and check
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        password = st.text_input(
+            "Admin Password",
+            type="password",
+            key="production_admin_pwd"
+        )
+    
+    # Read admin passwords from Streamlit secrets when available
+    current_admin_pwd = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
+    current_josh_pwd = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
 
-                    if password_input in {current_admin_pwd, current_josh_pwd}:
-                        st.session_state.is_admin = True
-                        st.rerun()
-                    else:
-                        st.error("Incorrect password.")
-        else:
-            st.success("Admin Mode Active")
-            if st.button("Log Out"):
-                st.session_state.is_admin = False
-                st.rerun()
+    st.session_state.is_admin = (
+        password in {
+            current_admin_pwd,
+            current_josh_pwd
+        }
+    )
 
 # ---------- RULES ----------
 
