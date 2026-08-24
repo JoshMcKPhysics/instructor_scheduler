@@ -25,9 +25,8 @@ LOCAL_DEV = False
 ADMIN_PASSWORD = None
 JOSH_PASSWORD = None
 
-# Local state file (used as fallback if Supabase is not available)
+
 BASE_DIR = Path(__file__).parent
-STATE_FILE = BASE_DIR / "schedule_state.json"
 
 DATA_FILE = BASE_DIR / "instructor_dates.pkl"
 DATA_CSV = BASE_DIR / "data.csv"
@@ -132,9 +131,8 @@ if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
 def load_from_db():
-    # Try to load state from Supabase (preferred when deployed)
     try:
-        if not LOCAL_DEV and create_client is not None:
+        if create_client is not None:
             supa_url = st.secrets.get("SUPABASE_URL")
             supa_key = st.secrets.get("SUPABASE_KEY")
             if supa_url and supa_key:
@@ -143,73 +141,41 @@ def load_from_db():
                     supa = create_client(supa_url, supa_key)
                     st.session_state["supabase"] = supa
 
-                # Expect a single-row table `schedule_state` with id='current'
-                try:
-                    res = supa.table("schedule_state").select("selected,assigned_hours,assigned_time_ranges").eq("id", "current").execute()
-                    data = None
-                    if hasattr(res, "data"):
-                        if res.data:
-                            data = res.data[0]
-                    elif isinstance(res, dict):
-                        data = (res.get("data") or [None])[0]
+                res = supa.table("schedule_state").select("selected,assigned_hours,assigned_time_ranges").eq("id", "current").execute()
+                data = None
+                if hasattr(res, "data"):
+                    if res.data:
+                        data = res.data[0]
+                elif isinstance(res, dict):
+                    data = (res.get("data") or [None])[0]
 
-                    if data:
-                        st.session_state.selected = data.get("selected", {}) or {}
-                        raw_hours = data.get("assigned_hours", {}) or {}
+                if data:
+                    st.session_state.selected = data.get("selected", {}) or {}
+                    raw_hours = data.get("assigned_hours", {}) or {}
+                    try:
+                        st.session_state.assigned_hours = {k: int(v) for k, v in raw_hours.items()}
+                    except Exception:
+                        st.session_state.assigned_hours = raw_hours or {}
+                        
+                    raw_times = data.get("assigned_time_ranges", {}) or {}
+                    converted_times = {}
+                    for k, v in raw_times.items():
                         try:
-                            st.session_state.assigned_hours = {k: int(v) for k, v in raw_hours.items()}
+                            if isinstance(v, list) and len(v) == 2:
+                                t_start = datetime.datetime.strptime(v[0], "%H:%M").time()
+                                t_end = datetime.datetime.strptime(v[1], "%H:%M").time()
+                                converted_times[k] = (t_start, t_end)
                         except Exception:
-                            st.session_state.assigned_hours = raw_hours or {}
-                            
-                        # Load and convert time ranges back to datetime.time objects
-                        raw_times = data.get("assigned_time_ranges", {}) or {}
-                        converted_times = {}
-                        for k, v in raw_times.items():
-                            try:
-                                if isinstance(v, list) and len(v) == 2:
-                                    t_start = datetime.datetime.strptime(v[0], "%H:%M").time()
-                                    t_end = datetime.datetime.strptime(v[1], "%H:%M").time()
-                                    converted_times[k] = (t_start, t_end)
-                            except Exception:
-                                pass
-                        st.session_state.assigned_time_ranges = converted_times
-                        return
-                except Exception:
-                    pass
-
+                            pass
+                    st.session_state.assigned_time_ranges = converted_times
+                    return
     except Exception:
         pass
 
-    # Local JSON fallback
-    try:
-        if STATE_FILE.exists():
-            data = _json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            st.session_state.selected = data.get("selected", {})
-            raw_hours = data.get("assigned_hours", {})
-            try:
-                st.session_state.assigned_hours = {k: int(v) for k, v in raw_hours.items()}
-            except Exception:
-                st.session_state.assigned_hours = raw_hours or {}
-                
-            raw_times = data.get("assigned_time_ranges", {})
-            converted_times = {}
-            for k, v in raw_times.items():
-                try:
-                    if isinstance(v, list) and len(v) == 2:
-                        t_start = datetime.datetime.strptime(v[0], "%H:%M").time()
-                        t_end = datetime.datetime.strptime(v[1], "%H:%M").time()
-                        converted_times[k] = (t_start, t_end)
-                except Exception:
-                    pass
-            st.session_state.assigned_time_ranges = converted_times
-        else:
-            st.session_state.selected = {}
-            st.session_state.assigned_hours = {}
-            st.session_state.assigned_time_ranges = {}
-    except Exception:
-        st.session_state.selected = {}
-        st.session_state.assigned_hours = {}
-        st.session_state.assigned_time_ranges = {}
+    # Default empty state if Supabase fetch fails or is empty
+    st.session_state.selected = {}
+    st.session_state.assigned_hours = {}
+    st.session_state.assigned_time_ranges = {}
 
 def save_to_db():
     serialized_times = {}
@@ -224,9 +190,8 @@ def save_to_db():
         "assigned_time_ranges": serialized_times
     }
 
-    # Try to save to Supabase when configured
     try:
-        if not LOCAL_DEV and create_client is not None:
+        if create_client is not None:
             supa_url = st.secrets.get("SUPABASE_URL")
             supa_key = st.secrets.get("SUPABASE_KEY")
             if supa_url and supa_key:
@@ -235,51 +200,7 @@ def save_to_db():
                     supa = create_client(supa_url, supa_key)
                     st.session_state["supabase"] = supa
 
-                try:
-                    supa.table("schedule_state").upsert(payload).execute()
-                    return
-                except Exception:
-                    pass
-
-    except Exception:
-        pass
-
-    # Local fallback
-    try:
-        STATE_FILE.write_text(_json.dumps({
-            "selected": payload["selected"], 
-            "assigned_hours": payload["assigned_hours"],
-            "assigned_time_ranges": payload["assigned_time_ranges"]
-        }, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-    # Try to save to Supabase when configured
-    try:
-        if not LOCAL_DEV and create_client is not None:
-            supa_url = st.secrets.get("SUPABASE_URL")
-            supa_key = st.secrets.get("SUPABASE_KEY")
-            if supa_url and supa_key:
-                supa = st.session_state.get("supabase")
-                if supa is None:
-                    supa = create_client(supa_url, supa_key)
-                    st.session_state["supabase"] = supa
-
-                # Use upsert to create or update the single state row
-                try:
-                    supa.table("schedule_state").upsert(payload).execute()
-                    return
-                except Exception:
-                    # fall back to local file
-                    pass
-
-    except Exception:
-        # ignore and fallback to local
-        pass
-
-    # Local fallback
-    try:
-        STATE_FILE.write_text(_json.dumps({"selected": payload["selected"], "assigned_hours": payload["assigned_hours"]}, indent=2), encoding="utf-8")
+                supa.table("schedule_state").upsert(payload).execute()
     except Exception:
         pass
 
