@@ -419,15 +419,6 @@ def toggle(day, instructor, max_days):
 
         st.rerun()
 
-    # --------------------
-    # Daily limit
-    # --------------------
-
-    # Allow admins to bypass the daily cap only when `admin_bypass` is enabled
-    if selected_count(day) >= 5 and not (
-        st.session_state.get("is_admin") and st.session_state.get("admin_bypass", False)
-    ):
-        return
 
     current_days = weekly_days_assigned(
         instructor,
@@ -491,12 +482,6 @@ def handle_tile_click(day, instructor, max_days):
     # --------------------
 
     if not currently_selected:
-
-        # Daily limit (admins may bypass when `admin_bypass` is enabled)
-        if selected_count(day) >= 5 and not (
-            st.session_state.get("is_admin") and st.session_state.get("admin_bypass", False)
-        ):
-            return
 
         current_days = weekly_days_assigned(instructor, day)
 
@@ -736,8 +721,7 @@ for week in cal.monthdatescalendar(
                         and (
                             not selected
                             and (
-                                assigned_today >= 5
-                                or week_days >= max_days
+                                week_days >= max_days
                             )
                         )
                     )
