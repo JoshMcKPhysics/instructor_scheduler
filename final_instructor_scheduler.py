@@ -145,10 +145,9 @@ def load_from_db():
 
                 # Expect a single-row table `schedule_state` with id='current'
                 try:
-                    res = supa.table("schedule_state").select("selected,assigned_hours").eq("id", "current").execute()
+                    res = supa.table("schedule_state").select("selected,assigned_hours,assigned_time_ranges").eq("id", "current").execute()
                     data = None
                     if hasattr(res, "data"):
-                        # supabase-py returns an object with .data
                         if res.data:
                             data = res.data[0]
                     elif isinstance(res, dict):
@@ -161,16 +160,27 @@ def load_from_db():
                             st.session_state.assigned_hours = {k: int(v) for k, v in raw_hours.items()}
                         except Exception:
                             st.session_state.assigned_hours = raw_hours or {}
+                            
+                        # Load and convert time ranges back to datetime.time objects
+                        raw_times = data.get("assigned_time_ranges", {}) or {}
+                        converted_times = {}
+                        for k, v in raw_times.items():
+                            try:
+                                if isinstance(v, list) and len(v) == 2:
+                                    t_start = datetime.datetime.strptime(v[0], "%H:%M").time()
+                                    t_end = datetime.datetime.strptime(v[1], "%H:%M").time()
+                                    converted_times[k] = (t_start, t_end)
+                            except Exception:
+                                pass
+                        st.session_state.assigned_time_ranges = converted_times
                         return
                 except Exception:
-                    # Fall through to local file fallback
                     pass
 
     except Exception:
-        # Any supabase/init error -> fallback to local file
         pass
 
-    # Local JSON fallback (works for local dev or if Supabase is unavailable)
+    # Local JSON fallback
     try:
         if STATE_FILE.exists():
             data = _json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -180,19 +190,69 @@ def load_from_db():
                 st.session_state.assigned_hours = {k: int(v) for k, v in raw_hours.items()}
             except Exception:
                 st.session_state.assigned_hours = raw_hours or {}
+                
+            raw_times = data.get("assigned_time_ranges", {})
+            converted_times = {}
+            for k, v in raw_times.items():
+                try:
+                    if isinstance(v, list) and len(v) == 2:
+                        t_start = datetime.datetime.strptime(v[0], "%H:%M").time()
+                        t_end = datetime.datetime.strptime(v[1], "%H:%M").time()
+                        converted_times[k] = (t_start, t_end)
+                except Exception:
+                    pass
+            st.session_state.assigned_time_ranges = converted_times
         else:
             st.session_state.selected = {}
             st.session_state.assigned_hours = {}
+            st.session_state.assigned_time_ranges = {}
     except Exception:
         st.session_state.selected = {}
         st.session_state.assigned_hours = {}
+        st.session_state.assigned_time_ranges = {}
 
 def save_to_db():
+    serialized_times = {}
+    for k, v in st.session_state.get("assigned_time_ranges", {}).items():
+        if isinstance(v, tuple) and len(v) == 2:
+            serialized_times[k] = [v[0].strftime("%H:%M"), v[1].strftime("%H:%M")]
+
     payload = {
         "id": "current",
         "selected": st.session_state.selected,
-        "assigned_hours": st.session_state.get("assigned_hours", {})
+        "assigned_hours": st.session_state.get("assigned_hours", {}),
+        "assigned_time_ranges": serialized_times
     }
+
+    # Try to save to Supabase when configured
+    try:
+        if not LOCAL_DEV and create_client is not None:
+            supa_url = st.secrets.get("SUPABASE_URL")
+            supa_key = st.secrets.get("SUPABASE_KEY")
+            if supa_url and supa_key:
+                supa = st.session_state.get("supabase")
+                if supa is None:
+                    supa = create_client(supa_url, supa_key)
+                    st.session_state["supabase"] = supa
+
+                try:
+                    supa.table("schedule_state").upsert(payload).execute()
+                    return
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    # Local fallback
+    try:
+        STATE_FILE.write_text(_json.dumps({
+            "selected": payload["selected"], 
+            "assigned_hours": payload["assigned_hours"],
+            "assigned_time_ranges": payload["assigned_time_ranges"]
+        }, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
     # Try to save to Supabase when configured
     try:
@@ -494,9 +554,10 @@ def handle_tile_click(day, instructor, max_days):
 
     currently_selected = st.session_state.selected.get(key, False)
 
-    # If tile is selected and already being edited, a second click hides the editor (keep assignment)
+    # If tile is selected and already being edited, a second click hides the editor and saves
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
+        save_to_db() # <--- Saves to database when minimizing the editor
         st.rerun()
 
     # If tile is selected but not currently being edited, start editing it.
@@ -884,8 +945,6 @@ for week in cal.monthdatescalendar(
                                         st.session_state.selected[key] = False
                                         if st.session_state.get("editing") == key:
                                             st.session_state.editing = None
-                                    save_to_db()
-                                    st.rerun()
                         else:
                             # Render a disabled Streamlit button inside the stylable container so it matches the admin's blue button styling perfectly
                             st.button(label, key=f"btn_{key}", disabled=True, width="stretch")
