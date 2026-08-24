@@ -945,6 +945,8 @@ for week in cal.monthdatescalendar(
                                         st.session_state.selected[key] = False
                                         if st.session_state.get("editing") == key:
                                             st.session_state.editing = None
+                                    save_to_db()
+                                    st.rerun()
                         else:
                             # Render a disabled Streamlit button inside the stylable container so it matches the admin's blue button styling perfectly
                             st.button(label, key=f"btn_{key}", disabled=True, width="stretch")
