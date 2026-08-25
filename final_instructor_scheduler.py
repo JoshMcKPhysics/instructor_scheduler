@@ -835,7 +835,6 @@ for week in cal.monthdatescalendar(
                                         key=f"end_{key}"
                                     )
                                     
-                                    # --- REPLACE CHECKBOX WITH A DIRECT ACTION BUTTON ---
                                     if st.button(f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", key=f"apply_future_btn_{key}"):
                                         target_dow = pd.Timestamp(day).dayofweek
                                         current_start_t = hour_mapping[start_label]
@@ -849,9 +848,11 @@ for week in cal.monthdatescalendar(
                                         except Exception:
                                             current_hrs = assignment_hours(day)
 
-                                        # Loop through dataframe and update matching future dates
+                                        # Use load_data() to grab the full master dataframe across all months, not just the filtered view
+                                        master_df = load_data()
+                                        
                                         count_updated = 0
-                                        for _, d_row in df[df["Name"] == instructor].iterrows():
+                                        for _, d_row in master_df[master_df["Name"] == instructor].iterrows():
                                             row_date = pd.Timestamp(d_row["Date"])
                                             if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
                                                 future_key = f"{row_date.date()}|{instructor}"
@@ -863,7 +864,7 @@ for week in cal.monthdatescalendar(
                                                     count_updated += 1
                                         
                                         save_to_db()
-                                        st.toast(f"Applied schedule to {count_updated} future {pd.Timestamp(day).strftime('%A')}s!")
+                                        st.toast(f"Applied schedule to {count_updated} future {pd.Timestamp(day).strftime('%A')}s across all months!")
                                         st.rerun()
 
                                     # 3. Deactivate / Clear Button
