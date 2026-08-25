@@ -470,7 +470,6 @@ def handle_tile_click(day, instructor, max_days):
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
         
-        # Check if the "Apply to future" checkbox was checked when closing
         apply_future_key = f"future_{key}"
         if st.session_state.get(apply_future_key, False):
             target_dow = pd.Timestamp(day).dayofweek
@@ -489,7 +488,7 @@ def handle_tile_click(day, instructor, max_days):
                     st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
                     st.session_state.assigned_hours[future_key] = current_hrs
 
-            st.session_state[apply_future_key] = False
+            st.session_state.pop(apply_future_key, None)
 
         save_to_db() 
         st.rerun()
@@ -855,7 +854,7 @@ for week in cal.monthdatescalendar(
                                                         st.session_state.assigned_time_ranges.pop(future_key, None)
                                                     if "assigned_hours" in st.session_state:
                                                         st.session_state.assigned_hours.pop(future_key, None)
-                                            st.session_state[apply_future_key] = False
+                                            st.session_state.pop(apply_future_key, None)
                                         else:
                                             if f"{day}|{instructor}" in st.session_state.selected:
                                                 st.session_state.selected[f"{day}|{instructor}"] = False
