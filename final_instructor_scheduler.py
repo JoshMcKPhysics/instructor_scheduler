@@ -835,12 +835,36 @@ for week in cal.monthdatescalendar(
                                         key=f"end_{key}"
                                     )
                                     
-                                    # --- CHECKBOX (UNCHECKED BY DEFAULT) ---
-                                    st.checkbox(
-                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
-                                        value=False, 
-                                        key=f"future_{key}"
-                                    )
+                                    # --- REPLACE CHECKBOX WITH A DIRECT ACTION BUTTON ---
+                                    if st.button(f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", key=f"apply_future_btn_{key}"):
+                                        target_dow = pd.Timestamp(day).dayofweek
+                                        current_start_t = hour_mapping[start_label]
+                                        current_end_t = hour_mapping[end_label]
+                                        
+                                        try:
+                                            start_dt = datetime.datetime.combine(datetime.date.today(), current_start_t)
+                                            end_dt = datetime.datetime.combine(datetime.date.today(), current_end_t)
+                                            diff_seconds = (end_dt - start_dt).total_seconds()
+                                            current_hrs = max(0, round(diff_seconds / 3600))
+                                        except Exception:
+                                            current_hrs = assignment_hours(day)
+
+                                        # Loop through dataframe and update matching future dates
+                                        count_updated = 0
+                                        for _, d_row in df[df["Name"] == instructor].iterrows():
+                                            row_date = pd.Timestamp(d_row["Date"])
+                                            if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
+                                                future_key = f"{row_date.date()}|{instructor}"
+                                                if st.session_state.selected.get(future_key, False):
+                                                    if "assigned_time_ranges" not in st.session_state:
+                                                        st.session_state.assigned_time_ranges = {}
+                                                    st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
+                                                    st.session_state.assigned_hours[future_key] = current_hrs
+                                                    count_updated += 1
+                                        
+                                        save_to_db()
+                                        st.toast(f"Applied schedule to {count_updated} future {pd.Timestamp(day).strftime('%A')}s!")
+                                        st.rerun()
 
                                     # 3. Deactivate / Clear Button
                                     if st.button("Inactive", key=f"clear_{day}_{instructor}"):
