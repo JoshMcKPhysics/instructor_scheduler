@@ -469,7 +469,26 @@ def handle_tile_click(day, instructor, max_days):
     # If tile is selected and already being edited, a second click hides the editor and saves
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
-        save_to_db() # <--- Saves to database when minimizing the editor
+        
+        # --- CHECK IF "APPLY TO FUTURE" IS CHECKED UPON CLOSING ---
+        apply_future_key = f"future_{key}"
+        if st.session_state.get(apply_future_key, False):
+            target_dow = pd.Timestamp(day).dayofweek
+            # Grab the current tile's newly selected time ranges and hours
+            current_start_t, current_end_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))
+            current_hrs = st.session_state.get("assigned_hours", {}).get(key, assignment_hours(day))
+            
+            for _, d_row in df[df["Name"] == instructor].iterrows():
+                row_date = pd.Timestamp(d_row["Date"])
+                if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
+                    future_key = f"{row_date.date()}|{instructor}"
+                    if st.session_state.selected.get(future_key, False):
+                        if "assigned_time_ranges" not in st.session_state:
+                            st.session_state.assigned_time_ranges = {}
+                        st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
+                        st.session_state.assigned_hours[future_key] = current_hrs
+
+        save_to_db() 
         st.rerun()
 
     # If tile is selected but not currently being edited, start editing it.
@@ -485,15 +504,12 @@ def handle_tile_click(day, instructor, max_days):
 
         current_days = weekly_days_assigned(instructor, day)
 
-        # Block if the instructor already has the maximum allowed days
-        # Admins may override this limit only when `admin_bypass` is enabled
         if current_days >= max_days and not (
             st.session_state.get("is_admin") and st.session_state.get("admin_bypass", False)
         ):
             return
 
         st.session_state.selected[key] = True
-        # set default hours for the assignment
         try:
             st.session_state.assigned_hours[key] = int(
                 st.session_state.assigned_hours.get(
@@ -811,24 +827,28 @@ for week in cal.monthdatescalendar(
                                         index=hour_options.index(default_end_label),
                                         key=f"end_{key}"
                                     )
+                                    
+                                    # --- CHECKBOX (UNCHECKED BY DEFAULT) ---
+                                    st.checkbox(
+                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
+                                        value=False, 
+                                        key=f"future_{key}"
+                                    )
+
                                     # 3. Deactivate / Clear Button
                                     if st.button("Inactive", key=f"clear_{day}_{instructor}"):
                                         if f"{day}|{instructor}" in st.session_state.selected:
                                             del st.session_state.selected[f"{day}|{instructor}"]
                                         
-                                        # Also clean up any stored time range for this tile
                                         if "assigned_time_ranges" in st.session_state:
                                             st.session_state.assigned_time_ranges.pop(key, None)
                                             
-                                        # --- ADD THIS LINE SO IT SAVES TO SUPABASE ---
                                         save_to_db()
-                                        
                                         st.rerun()
 
                                 start_t = hour_mapping[start_label]
                                 end_t = hour_mapping[end_label]
 
-                                # Calculate hours difference safely
                                 try:
                                     start_dt = datetime.datetime.combine(datetime.date.today(), start_t)
                                     end_dt = datetime.datetime.combine(datetime.date.today(), end_t)
@@ -838,7 +858,6 @@ for week in cal.monthdatescalendar(
                                 except Exception:
                                     hours_int = assignment_hours(day)
 
-                                # Save range and hours state
                                 if "assigned_time_ranges" not in st.session_state:
                                     st.session_state.assigned_time_ranges = {}
                                 st.session_state.assigned_time_ranges[key] = (start_t, end_t)
