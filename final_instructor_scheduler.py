@@ -470,29 +470,41 @@ def handle_tile_click(day, instructor, max_days):
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
         
-        # Check if the future propagation checkbox was ticked
+        # Check if the "Apply to future" checkbox was checked for this tile
         apply_future_key = f"future_{key}"
         if st.session_state.get(apply_future_key, False):
             target_dow = pd.Timestamp(day).dayofweek
             
-            # Grab current hours and time range of the tile being edited
+            # Get current settings of the tile being edited
             current_start_t, current_end_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))
             current_hrs = st.session_state.get("assigned_hours", {}).get(key, assignment_hours(day))
+            is_currently_active = st.session_state.selected.get(key, False)
             
-            # Loop through all dates in the dataframe for this instructor
-            for _, d_row in df[df["Name"] == instructor].iterrows():
+            # Use load_data() to scan across all months in the master file
+            master_df = load_data()
+            
+            for _, d_row in master_df[master_df["Name"] == instructor].iterrows():
                 row_date = pd.Timestamp(d_row["Date"])
-                # Match same day of the week, on or after the current date
+                # Match the same day of the week, on or after the current date
                 if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
                     future_key = f"{row_date.date()}|{instructor}"
-                    # Only apply to tiles that are already selected/active
-                    if st.session_state.selected.get(future_key, False):
+                    
+                    if is_currently_active:
+                        # If active, propagate selection, hours, and time ranges forward
+                        st.session_state.selected[future_key] = True
                         if "assigned_time_ranges" not in st.session_state:
                             st.session_state.assigned_time_ranges = {}
                         st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
                         st.session_state.assigned_hours[future_key] = current_hrs
+                    else:
+                        # If the user deactivated/cleared this tile, propagate the deactivation forward
+                        st.session_state.selected[future_key] = False
+                        if "assigned_time_ranges" in st.session_state:
+                            st.session_state.assigned_time_ranges.pop(future_key, None)
+                        if "assigned_hours" in st.session_state:
+                            st.session_state.assigned_hours.pop(future_key, None)
 
-            # Optional: clear the checkbox state after applying so it doesn't stay stuck checked
+            # Reset the checkbox state so it doesn't linger
             st.session_state[apply_future_key] = False
 
         save_to_db() 
@@ -822,6 +834,13 @@ for week in cal.monthdatescalendar(
                                     default_end_label = hour_options[len(hour_options)-1]
 
                                 with st.container():
+                                    # --- CHECKBOX FOR FUTURE RECURRENCE ---
+                                    st.checkbox(
+                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
+                                        value=False, 
+                                        key=f"future_{key}"
+                                    )
+
                                     start_label = st.selectbox(
                                         "Start Time", 
                                         options=hour_options, 
