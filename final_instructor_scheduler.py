@@ -470,41 +470,25 @@ def handle_tile_click(day, instructor, max_days):
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
         
-        # Check if the "Apply to future" checkbox was checked for this tile
+        # Check if the "Apply to future" checkbox was checked when closing
         apply_future_key = f"future_{key}"
         if st.session_state.get(apply_future_key, False):
             target_dow = pd.Timestamp(day).dayofweek
-            
-            # Get current settings of the tile being edited
-            current_start_t, current_end_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))
+            current_start_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))[0]
+            current_end_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))[1]
             current_hrs = st.session_state.get("assigned_hours", {}).get(key, assignment_hours(day))
-            is_currently_active = st.session_state.selected.get(key, False)
             
-            # Use load_data() to scan across all months in the master file
             master_df = load_data()
-            
             for _, d_row in master_df[master_df["Name"] == instructor].iterrows():
                 row_date = pd.Timestamp(d_row["Date"])
-                # Match the same day of the week, on or after the current date
                 if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
                     future_key = f"{row_date.date()}|{instructor}"
-                    
-                    if is_currently_active:
-                        # If active, propagate selection, hours, and time ranges forward
-                        st.session_state.selected[future_key] = True
-                        if "assigned_time_ranges" not in st.session_state:
-                            st.session_state.assigned_time_ranges = {}
-                        st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
-                        st.session_state.assigned_hours[future_key] = current_hrs
-                    else:
-                        # If the user deactivated/cleared this tile, propagate the deactivation forward
-                        st.session_state.selected[future_key] = False
-                        if "assigned_time_ranges" in st.session_state:
-                            st.session_state.assigned_time_ranges.pop(future_key, None)
-                        if "assigned_hours" in st.session_state:
-                            st.session_state.assigned_hours.pop(future_key, None)
+                    st.session_state.selected[future_key] = True
+                    if "assigned_time_ranges" not in st.session_state:
+                        st.session_state.assigned_time_ranges = {}
+                    st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
+                    st.session_state.assigned_hours[future_key] = current_hrs
 
-            # Reset the checkbox state so it doesn't linger
             st.session_state[apply_future_key] = False
 
         save_to_db() 
@@ -834,13 +818,6 @@ for week in cal.monthdatescalendar(
                                     default_end_label = hour_options[len(hour_options)-1]
 
                                 with st.container():
-                                    # --- CHECKBOX FOR FUTURE RECURRENCE ---
-                                    st.checkbox(
-                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
-                                        value=False, 
-                                        key=f"future_{key}"
-                                    )
-
                                     start_label = st.selectbox(
                                         "Start Time", 
                                         options=hour_options, 
@@ -854,36 +831,44 @@ for week in cal.monthdatescalendar(
                                         key=f"end_{key}"
                                     )
                                     
-                                    if st.button(f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", key=f"apply_future_btn_{key}"):
-                                        target_dow = pd.Timestamp(day).dayofweek
-                                        current_start_t = hour_mapping[start_label]
-                                        current_end_t = hour_mapping[end_label]
-                                        
-                                        try:
-                                            start_dt = datetime.datetime.combine(datetime.date.today(), current_start_t)
-                                            end_dt = datetime.datetime.combine(datetime.date.today(), current_end_t)
-                                            diff_seconds = (end_dt - start_dt).total_seconds()
-                                            current_hrs = max(0, round(diff_seconds / 3600))
-                                        except Exception:
-                                            current_hrs = assignment_hours(day)
+                                    # --- THE CHECKBOX ---
+                                    st.checkbox(
+                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
+                                        value=False, 
+                                        key=f"future_{key}"
+                                    )
 
-                                        # Use load_data() to grab the full master dataframe across all months, not just the filtered view
-                                        master_df = load_data()
+                                    # 3. Deactivate / Clear Button
+                                    if st.button("Inactive", key=f"clear_{day}_{instructor}"):
+                                        # Check if future propagation is requested for deactivation
+                                        apply_future_key = f"future_{key}"
+                                        propagate_future = st.session_state.get(apply_future_key, False)
                                         
-                                        count_updated = 0
-                                        for _, d_row in master_df[master_df["Name"] == instructor].iterrows():
-                                            row_date = pd.Timestamp(d_row["Date"])
-                                            if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
-                                                future_key = f"{row_date.date()}|{instructor}"
-                                                if st.session_state.selected.get(future_key, False):
-                                                    if "assigned_time_ranges" not in st.session_state:
-                                                        st.session_state.assigned_time_ranges = {}
-                                                    st.session_state.assigned_time_ranges[future_key] = (current_start_t, current_end_t)
-                                                    st.session_state.assigned_hours[future_key] = current_hrs
-                                                    count_updated += 1
-                                        
+                                        if propagate_future:
+                                            target_dow = pd.Timestamp(day).dayofweek
+                                            master_df = load_data()
+                                            for _, d_row in master_df[master_df["Name"] == instructor].iterrows():
+                                                row_date = pd.Timestamp(d_row["Date"])
+                                                if row_date.dayofweek == target_dow and row_date >= pd.Timestamp(day):
+                                                    future_key = f"{row_date.date()}|{instructor}"
+                                                    st.session_state.selected[future_key] = False
+                                                    if "assigned_time_ranges" in st.session_state:
+                                                        st.session_state.assigned_time_ranges.pop(future_key, None)
+                                                    if "assigned_hours" in st.session_state:
+                                                        st.session_state.assigned_hours.pop(future_key, None)
+                                            st.session_state[apply_future_key] = False
+                                        else:
+                                            # Single-day clear
+                                            if f"{day}|{instructor}" in st.session_state.selected:
+                                                st.session_state.selected[f"{day}|{instructor}"] = False
+                                            if "assigned_time_ranges" in st.session_state:
+                                                st.session_state.assigned_time_ranges.pop(key, None)
+                                            if "assigned_hours" in st.session_state:
+                                                st.session_state.assigned_hours.pop(key, None)
+                                            if st.session_state.get("editing") == key:
+                                                st.session_state.editing = None
+                                                
                                         save_to_db()
-                                        st.toast(f"Applied schedule to {count_updated} future {pd.Timestamp(day).strftime('%A')}s across all months!")
                                         st.rerun()
 
                                     # 3. Deactivate / Clear Button
