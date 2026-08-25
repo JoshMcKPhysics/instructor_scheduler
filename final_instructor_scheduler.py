@@ -831,16 +831,15 @@ for week in cal.monthdatescalendar(
                                         key=f"end_{key}"
                                     )
                                     
-                                    # --- THE CHECKBOX ---
+                                    # --- CHECKBOX ---
                                     st.checkbox(
                                         f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
                                         value=False, 
                                         key=f"future_{key}"
                                     )
 
-                                    # 3. Deactivate / Clear Button
-                                    if st.button("Inactive", key=f"clear_{day}_{instructor}"):
-                                        # Check if future propagation is requested for deactivation
+                                    # --- INACTIVE BUTTON ---
+                                    if st.button("Inactive", key=f"clear_{key}"):
                                         apply_future_key = f"future_{key}"
                                         propagate_future = st.session_state.get(apply_future_key, False)
                                         
@@ -858,7 +857,6 @@ for week in cal.monthdatescalendar(
                                                         st.session_state.assigned_hours.pop(future_key, None)
                                             st.session_state[apply_future_key] = False
                                         else:
-                                            # Single-day clear
                                             if f"{day}|{instructor}" in st.session_state.selected:
                                                 st.session_state.selected[f"{day}|{instructor}"] = False
                                             if "assigned_time_ranges" in st.session_state:
