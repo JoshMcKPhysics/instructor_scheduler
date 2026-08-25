@@ -837,7 +837,7 @@ for week in cal.monthdatescalendar(
                                         key=f"future_{key}"
                                     )
 
-                                    # --- INACTIVE BUTTON ---
+                                    # --- SINGLE INACTIVE BUTTON ---
                                     if st.button("Inactive", key=f"clear_{key}"):
                                         apply_future_key = f"future_{key}"
                                         propagate_future = st.session_state.get(apply_future_key, False)
@@ -865,17 +865,6 @@ for week in cal.monthdatescalendar(
                                             if st.session_state.get("editing") == key:
                                                 st.session_state.editing = None
                                                 
-                                        save_to_db()
-                                        st.rerun()
-
-                                    # 3. Deactivate / Clear Button
-                                    if st.button("Inactive", key=f"clear_{day}_{instructor}"):
-                                        if f"{day}|{instructor}" in st.session_state.selected:
-                                            del st.session_state.selected[f"{day}|{instructor}"]
-                                        
-                                        if "assigned_time_ranges" in st.session_state:
-                                            st.session_state.assigned_time_ranges.pop(key, None)
-                                            
                                         save_to_db()
                                         st.rerun()
 
