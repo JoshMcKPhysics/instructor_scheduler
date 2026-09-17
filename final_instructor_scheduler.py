@@ -439,6 +439,9 @@ cal = calendar.Calendar(firstweekday=6)
 # Build pre-computed days map before entering loops
 weekly_days_map = get_weekly_days_map()
 
+# Master set of all instructors from input file/df
+master_instructors = set(df["Name"].unique())
+
 # ---------- CALENDAR ----------
 
 for week in cal.monthdatescalendar(
@@ -464,22 +467,16 @@ for week in cal.monthdatescalendar(
                 month_df["Date"].dt.date == day
             ].copy()
 
-            if day_rows.empty:
-                continue
-
-            available_names = set(
-                day_rows[~day_rows['cover']]["Name"]
-            )
-
-            cover_names = set(
-                day_rows[day_rows['cover']]['Name']
-            )
+            if "cover" in day_rows.columns:
+                available_names = set(day_rows[~day_rows['cover']]["Name"])
+                cover_names = set(day_rows[day_rows['cover']]['Name'])
+            else:
+                available_names = set(day_rows["Name"])
+                cover_names = set()
 
             assigned_names = set()
 
-            for selection_key, selected in (
-                st.session_state.selected.items()
-            ):
+            for selection_key, selected in st.session_state.selected.items():
                 if not selected:
                     continue
 
@@ -489,11 +486,8 @@ for week in cal.monthdatescalendar(
                     assigned_names.add(instructor)
 
             if st.session_state.is_admin:
-                display_names = (
-                    available_names |
-                    cover_names |
-                    assigned_names
-                )
+                # Include all instructors in input pickle file + DB assignments
+                display_names = master_instructors | available_names | cover_names | assigned_names
             else:
                 display_names = assigned_names
 
@@ -578,7 +572,8 @@ for week in cal.monthdatescalendar(
                         )
                     )
 
-                    bg = ("#00BFFF" if selected else ("#eaeda8" if row['cover'] else "#d9d9d9"))
+                    is_cover = row.get('cover', False) if isinstance(row, dict) or 'cover' in row else False
+                    bg = ("#00BFFF" if selected else ("#eaeda8" if is_cover else "#d9d9d9"))
 
                     time_suffix = ""
                     if selected:
@@ -701,6 +696,7 @@ with st.expander("Assignments"):
 # ---------- SAVE / REFRESH ----------
 
 if st.button("Refresh"):
+    st.cache_data.clear()
     load_from_db()
     st.rerun()
 
