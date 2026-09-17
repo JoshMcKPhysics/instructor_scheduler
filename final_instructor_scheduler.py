@@ -464,6 +464,10 @@ for week in cal.monthdatescalendar(
                 month_df["Date"].dt.date == day
             ].copy()
 
+            # Skip rendering any tiles if the day is closed (no rows in input data)
+            if day_rows.empty:
+                continue
+
             if "cover" in day_rows.columns:
                 available_names = set(day_rows[~day_rows['cover']]["Name"])
                 cover_names = set(day_rows[day_rows['cover']]['Name'])
@@ -585,7 +589,7 @@ for week in cal.monthdatescalendar(
                     elif group == 2:
                         bg = "#eaeda8"  # Light Yellow
                     else:
-                        bg = "#f59a73"  # Pale Orange
+                        bg = "#fce4c4"  # Pale Orange
 
                     time_suffix = ""
                     if selected:
