@@ -585,7 +585,7 @@ for week in cal.monthdatescalendar(
                     elif group == 2:
                         bg = "#eaeda8"  # Light Yellow
                     else:
-                        bg = "#fce4c4"  # Pale Orange
+                        bg = "#f5895b"  # Pale Orange
 
                     time_suffix = ""
                     if selected:
