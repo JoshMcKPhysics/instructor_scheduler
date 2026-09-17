@@ -9,29 +9,43 @@ from streamlit_extras.stylable_container import stylable_container
 import json as _json
 import io
 
+# Optional supabase client (used when deployed with secrets)
 try:
     from supabase import create_client
 except Exception:
     create_client = None
 
 # ---------- CONFIG ----------
+
+# For local development: set to True to bypass Streamlit secrets/password checks
+# When deployed, set LOCAL_DEV = False and provide secrets in Streamlit Cloud.
 LOCAL_DEV = False
+
+# ADMIN_PASSWORD and JOSH_PASSWORD will be read from `st.secrets` when available
 ADMIN_PASSWORD = None
 JOSH_PASSWORD = None
 
+
 BASE_DIR = Path(__file__).parent
+
 DATA_FILE = BASE_DIR / "instructor_dates.pkl"
 DATA_CSV = BASE_DIR / "data.csv"
+
 DAY_PANEL_HEIGHT = 185
+
 
 def default_time_range(dt):
     dt = pd.Timestamp(dt)
+    # Mon-Thu (0-3)
     if dt.dayofweek < 4:
         return datetime.time(16, 0), datetime.time(20, 0)
+    # Friday (4)
     elif dt.dayofweek == 4:
         return datetime.time(17, 0), datetime.time(19, 0)
+    # Sat-Sun (5-6)
     else:
         return datetime.time(10, 0), datetime.time(13, 0)
+
 
 def format_short_time(time_str):
     if not time_str or time_str == "None":
@@ -41,8 +55,9 @@ def format_short_time(time_str):
             t = time_str
         else:
             t = pd.to_datetime(str(time_str)).time()
-        
+            
         hour_str = t.strftime("%I").lstrip("0")
+        # Grab just the first letter ('a' or 'p') from am/pm
         ampm = t.strftime("%p").lower()[0]
         
         if t.minute == 0:
@@ -52,17 +67,23 @@ def format_short_time(time_str):
     except Exception:
         return str(time_str), ""
 
-# ---------- APP SETUP ----------
+
+# ---------- APP ----------
+
 st.set_page_config(layout="wide")
 
 @st.cache_data
 def load_data():
+    # Prefer the pickle for speed
     if DATA_FILE.exists():
         df = pd.read_pickle(DATA_FILE).copy()
         df["Date"] = pd.to_datetime(df["Date"])
         return df
+    # Fallback: if a CSV with signups exists, synthesize a calendar-friendly dataframe
     if DATA_CSV.exists():
         raw = pd.read_csv(DATA_CSV).copy()
+
+        # collect candidate name columns
         if "Name" in raw.columns:
             names = raw["Name"].dropna().astype(str).unique().tolist()
         elif "Name (First + Last)" in raw.columns:
@@ -70,23 +91,40 @@ def load_data():
         elif "Email Address" in raw.columns:
             names = raw["Email Address"].dropna().astype(str).unique().tolist()
         else:
+            names = []
+
+        if not names:
             names = ["Alice Example", "Bob Example", "Casey Example"]
 
         start = pd.Timestamp.now().normalize()
         dates = pd.date_range(start, periods=30, freq="D")
-        rows = [{"Date": d, "Name": n} for d in dates for n in names]
+
+        rows = []
+        for d in dates:
+            for n in names:
+                rows.append({
+                    "Date": d,
+                    "Name": n
+                })
+
         df = pd.DataFrame(rows)
+        
+        # Save a pickle for faster subsequent runs
         try:
             pd.to_pickle(df, DATA_FILE)
         except Exception:
             pass
+
         return df
 
-    raise FileNotFoundError(f"Data file not found. Expected {DATA_FILE} or {DATA_CSV}.")
+    raise FileNotFoundError(
+        f"Data file not found. Expected {DATA_FILE} or {DATA_CSV} in the app folder."
+    )
 
 df = load_data()
 
-# ---------- STATE MANAGEMENT ----------
+# ---------- STATE ----------
+
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
@@ -103,8 +141,9 @@ def load_from_db():
 
                 res = supa.table("schedule_state").select("selected,assigned_hours,assigned_time_ranges").eq("id", "current").execute()
                 data = None
-                if hasattr(res, "data") and res.data:
-                    data = res.data[0]
+                if hasattr(res, "data"):
+                    if res.data:
+                        data = res.data[0]
                 elif isinstance(res, dict):
                     data = (res.get("data") or [None])[0]
 
@@ -131,6 +170,7 @@ def load_from_db():
     except Exception:
         pass
 
+    # Default empty state if Supabase fetch fails or is empty
     st.session_state.selected = {}
     st.session_state.assigned_hours = {}
     st.session_state.assigned_time_ranges = {}
@@ -157,6 +197,7 @@ def save_to_db():
                 if supa is None:
                     supa = create_client(supa_url, supa_key)
                     st.session_state["supabase"] = supa
+
                 supa.table("schedule_state").upsert(payload).execute()
     except Exception:
         pass
@@ -164,41 +205,142 @@ def save_to_db():
 if "selected" not in st.session_state:
     load_from_db()
 
+# Flag to prevent duplicate trigger saves during re-renders
+if "_skip_auto_save" not in st.session_state:
+    st.session_state._skip_auto_save = False
+
 if "editing" not in st.session_state:
+    # key of the tile currently being edited (admin only). Not persisted.
     st.session_state.editing = None
 
+
 if "admin_bypass" not in st.session_state:
+    # When True, admins may bypass daily and weekly caps from the Admin Overrides UI
     st.session_state.admin_bypass = False
 
-# ---------- HELPER COMPUTATIONS ----------
+
+# ---------- ADMIN AUTHENTICATION ----------
+
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+if "show_password_input" not in st.session_state:
+    st.session_state.show_password_input = False
+
+if LOCAL_DEV:
+    # Quick local dev toggle button
+    if "local_enable_admin" not in st.session_state:
+        st.session_state.local_enable_admin = False
+
+    if st.session_state.local_enable_admin:
+        st.session_state.is_admin = True
+        if st.button("Disable Admin (local)"):
+            st.session_state.local_enable_admin = False
+            st.session_state.is_admin = False
+            st.rerun()
+    else:
+        if st.button("Enable Admin (local)"):
+            st.session_state.local_enable_admin = True
+            st.session_state.is_admin = True
+            st.rerun()
+else:
+    # Production login flow
+    if not st.session_state.is_admin:
+        if not st.session_state.show_password_input:
+            if st.button("Admin Login"):
+                st.session_state.show_password_input = True
+                st.rerun()
+        else:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                password = st.text_input(
+                    "Admin Password",
+                    type="password",
+                    key="production_admin_pwd"
+                )
+            with col2:
+                if st.button("Cancel"):
+                    st.session_state.show_password_input = False
+                    st.rerun()
+
+            current_admin_pwd = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
+            current_josh_pwd = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
+
+            if password in {current_admin_pwd, current_josh_pwd}:
+                st.session_state.is_admin = True
+                st.session_state.show_password_input = False
+                st.rerun()
+    else:
+        if st.button("Log Out Admin"):
+            st.session_state.is_admin = False
+            st.rerun()
+
+# ---------- RULES ----------
+
 def assignment_hours(dt):
     dt = pd.Timestamp(dt)
+
     if dt.dayofweek < 4:
         return 4
+
     if dt.dayofweek >= 5:
         return 3
+
     return 0
 
 def week_key(dt):
+    # Normalize to the Sunday-starting week containing `dt` (Sunday-Saturday)
     d = pd.Timestamp(dt)
     days_to_subtract = (d.weekday() + 1) % 7
     week_start = (d - pd.Timedelta(days=days_to_subtract)).normalize()
     return f"{week_start.date()}"
 
-def build_weekly_assignment_cache():
-    """Optimized $O(N)$ pre-calculation of weekly assigned days per instructor."""
-    cache = {}
+def weekly_hours(name, day):
+    wk = week_key(day)
+    total = 0
+
+    for key, selected in st.session_state.selected.items():
+
+        if not selected:
+            continue
+
+        d, instructor = key.split("|", 1)
+
+        if instructor != name:
+            continue
+
+        if week_key(pd.to_datetime(d)) == wk:
+            total += int(
+                st.session_state.get("assigned_hours", {}).get(key, assignment_hours(d))
+            )
+
+    return total
+
+
+def weekly_days_assigned(name, day):
+    wk = week_key(day)
+    count = 0
+
     for key, selected in st.session_state.selected.items():
         if not selected:
             continue
-        try:
-            d_str, instructor = key.split("|", 1)
-            wk = week_key(pd.to_datetime(d_str))
-            cache_key = (instructor, wk)
-            cache[cache_key] = cache.get(cache_key, 0) + 1
-        except Exception:
+
+        d, instructor = key.split("|", 1)
+
+        if instructor != name:
             continue
-    return cache
+
+        if week_key(pd.to_datetime(d)) == wk:
+            count += 1
+
+    return count
+
+def selected_count(day):
+    return sum(
+        1
+        for k, v in st.session_state.selected.items()
+        if v and k.startswith(f"{day}|")
+    )
 
 def tile_css(bg):
     return f"""
@@ -215,8 +357,11 @@ def tile_css(bg):
     }}
     """
 
-# ---------- CLICK HANDLER ----------
-def handle_tile_click(day, instructor, max_days, weekly_days_count):
+
+# ---------- TOGGLE / CLICK HANDLERS ----------
+
+def handle_tile_click(day, instructor, max_days):
+    # Admins only
     if not st.session_state.is_admin:
         st.warning("Admin password required to modify assignments.")
         return
@@ -224,8 +369,10 @@ def handle_tile_click(day, instructor, max_days, weekly_days_count):
     key = f"{day}|{instructor}"
     currently_selected = st.session_state.selected.get(key, False)
 
+    # If tile is selected and already being edited, a second click hides the editor and saves
     if currently_selected and st.session_state.get("editing") == key:
         st.session_state.editing = None
+        
         apply_future_key = f"future_{key}"
         if st.session_state.get(apply_future_key, False):
             current_start_t = st.session_state.get("assigned_time_ranges", {}).get(key, default_time_range(day))[0]
@@ -233,6 +380,7 @@ def handle_tile_click(day, instructor, max_days, weekly_days_count):
             current_hrs = st.session_state.get("assigned_hours", {}).get(key, assignment_hours(day))
             
             base_date = pd.Timestamp(day)
+            # Generate weekly steps for the next year (52 weeks) mathematically
             for i in range(52):
                 row_date = base_date + pd.Timedelta(weeks=i)
                 future_key = f"{row_date.date()}|{instructor}"
@@ -244,15 +392,23 @@ def handle_tile_click(day, instructor, max_days, weekly_days_count):
 
             st.session_state.pop(apply_future_key, None)
 
-        save_to_db()
+        save_to_db() 
+        st.session_state._skip_auto_save = True
         st.rerun()
 
+    # If tile is selected but not currently being edited, start editing it.
     if currently_selected and st.session_state.get("editing") != key:
         st.session_state.editing = key
+        st.session_state._skip_auto_save = True
         st.rerun()
 
+    # --------------------
+    # Assign (when not currently selected)
+    # --------------------
     if not currently_selected:
-        if weekly_days_count >= max_days and not (
+        current_days = weekly_days_assigned(instructor, day)
+
+        if current_days >= max_days and not (
             st.session_state.get("is_admin") and st.session_state.get("admin_bypass", False)
         ):
             return
@@ -260,60 +416,130 @@ def handle_tile_click(day, instructor, max_days, weekly_days_count):
         st.session_state.selected[key] = True
         try:
             st.session_state.assigned_hours[key] = int(
-                st.session_state.assigned_hours.get(key, assignment_hours(day))
+                st.session_state.assigned_hours.get(
+                    key,
+                    assignment_hours(day)
+                )
             )
         except Exception:
             st.session_state.assigned_hours[key] = int(assignment_hours(day))
 
+        # open the hours editor for this tile
         st.session_state.editing = key
+
         save_to_db()
+        st.session_state._skip_auto_save = True
         st.rerun()
 
-# ---------- UI & CALENDAR RENDER ----------
-months = sorted(df["Date"].dt.to_period("M").unique())
+# ---------- MONTH ----------
+
+months = sorted(
+    df["Date"].dt.to_period("M").unique()
+)
+
 current_period = pd.Timestamp.now().to_period("M")
-default_idx = months.index(current_period) if current_period in months else 0
+try:
+    default_idx = months.index(current_period)
+except ValueError:
+    default_idx = 0
 
-month = st.selectbox("Month", months, index=default_idx, format_func=lambda p: p.strftime("%B %Y"))
-month_df = df[df["Date"].dt.to_period("M") == month]
+month = st.selectbox(
+    "Month",
+    months,
+    index=default_idx,
+    format_func=lambda p: p.strftime("%B %Y")
+)
 
-st.title(f"Instructor Scheduler — {month.strftime('%B %Y')}")
+month_df = df[
+    df["Date"].dt.to_period("M") == month
+]
 
+st.title(
+    f"Instructor Scheduler — {month.strftime('%B %Y')}"
+)
+
+# ---------- NAME FILTER ----------
 all_names = sorted(df["Name"].unique())
-name_filter = st.selectbox("Filter by name", ["All"] + all_names, index=0, key="name_filter")
+name_options = ["All"] + all_names
+name_filter = st.selectbox(
+    "Filter by name",
+    name_options,
+    index=0,
+    key="name_filter",
+    help="Show only this instructor's tiles (choose All to show everyone)"
+)
 
+# ---------- HEADERS ----------
 headers = st.columns(7)
-for c, d in zip(headers, ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]):
+
+for c, d in zip(
+    headers,
+    ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+):
     c.markdown(f"**{d}**")
 
 cal = calendar.Calendar(firstweekday=6)
 
-# Build cache before executing calendar grid
-weekly_days_cache = build_weekly_assignment_cache()
+# ---------- CALENDAR ----------
 
-for week in cal.monthdatescalendar(month.year, month.month):
+for week in cal.monthdatescalendar(
+    month.year,
+    month.month
+):
+
     cols = st.columns(7)
+
     for col, day in zip(cols, week):
+
         with col:
+
             if day.month != month.month:
                 st.empty()
                 continue
 
-            st.markdown(f"**{day.day}**")
-            day_rows = month_df[month_df["Date"].dt.date == day]
+            st.markdown(
+                f"**{day.day}**"
+            )
+
+            day_rows = month_df[
+                month_df["Date"].dt.date == day
+            ].copy()
+
             if day_rows.empty:
                 continue
 
-            available_names = set(day_rows[~day_rows['cover']]["Name"])
-            cover_names = set(day_rows[day_rows['cover']]['Name'])
-            
-            assigned_names = {
-                k.split("|", 1)[1] for k, v in st.session_state.selected.items()
-                if v and k.startswith(f"{day}|")
-            }
+            available_names = set(
+                day_rows[~day_rows['cover']]["Name"]
+            )
+
+            cover_names = set(
+                day_rows[day_rows['cover']]['Name']
+            )
+
+            assigned_names = set()
+
+            for selection_key, selected in (
+                st.session_state.selected.items()
+            ):
+
+                if not selected:
+                    continue
+
+                d, instructor = (
+                    selection_key.split("|", 1)
+                )
+
+                if d == str(day):
+                    assigned_names.add(
+                        instructor
+                    )
 
             if st.session_state.is_admin:
-                display_names = available_names | cover_names | assigned_names
+                display_names = (
+                    available_names |
+                    cover_names |
+                    assigned_names
+                )
             else:
                 display_names = assigned_names
 
@@ -325,47 +551,81 @@ for week in cal.monthdatescalendar(month.year, month.month):
                 continue
 
             rows = []
+
             for instructor in display_names:
-                match = day_rows[day_rows["Name"] == instructor]
-                if not match.empty:
-                    rows.append(match.iloc[0].to_dict())
+
+                match = day_rows[
+                    day_rows["Name"] == instructor
+                ]
+
+                if len(match):
+                    rows.append(
+                        match.iloc[0].to_dict()
+                    )
                 else:
-                    master = df[df["Name"] == instructor].drop_duplicates("Name")
-                    if not master.empty:
-                        info = master.iloc[0].to_dict()
+                    master = (
+                        df[
+                            df["Name"] == instructor
+                        ]
+                        .drop_duplicates("Name")
+                    )
+
+                    if len(master):
+                        info = (
+                            master.iloc[0]
+                            .to_dict()
+                        )
                         info["Date"] = pd.Timestamp(day)
                         rows.append(info)
 
             display_df = pd.DataFrame(rows)
-            if display_df.empty:
+
+            if len(display_df) == 0:
                 continue
 
             display_df["sort_group"] = display_df["Name"].apply(
-                lambda n: 0 if st.session_state.selected.get(f"{day}|{n}", False)
-                else (1 if n not in cover_names else 2)
+                lambda n: (
+                    0 if st.session_state.selected.get(f"{day}|{n}", False)
+                    else (1 if n not in cover_names else 2)
+                )
             )
-            display_df = display_df.sort_values(["sort_group", "Name"], ascending=[True, True])
 
-            with st.container(height=DAY_PANEL_HEIGHT):
+            display_df = display_df.sort_values(
+                ["sort_group", "Name"],
+                ascending=[True, True]
+            )
+
+            with st.container(
+                height=DAY_PANEL_HEIGHT
+            ):
                 for _, row in display_df.iterrows():
                     instructor = row["Name"]
-                    max_days = int(row.get("max_days", 5)) if "max_days" in row else 5
+
+                    try:
+                        max_days = int(row.get("max_days", 5))
+                    except Exception:
+                        max_days = 5
+
                     key = f"{day}|{instructor}"
+
                     selected = st.session_state.selected.get(key, False)
 
                     if not selected and not st.session_state.is_admin:
                         continue
 
-                    # Fast cache lookup for weekly total count
-                    wk = week_key(day)
-                    week_days_count = weekly_days_cache.get((instructor, wk), 0)
+                    week_days = weekly_days_assigned(instructor, day)
 
                     disabled = (
                         (not st.session_state.is_admin)
-                        and (not selected and week_days_count >= max_days)
+                        and (
+                            not selected
+                            and (
+                                week_days >= max_days
+                            )
+                        )
                     )
 
-                    bg = ("#00BFFF" if selected else ("#eaeda8" if row.get('cover', False) else "#d9d9d9"))
+                    bg = ("#00BFFF" if selected else ("#eaeda8" if row['cover'] else "#d9d9d9"))
 
                     time_suffix = ""
                     if selected:
@@ -388,10 +648,11 @@ for week in cal.monthdatescalendar(month.year, month.month):
                     with stylable_container(key=f"tile_{key}", css_styles=tile_css(bg)):
                         if st.session_state.is_admin:
                             if st.button(label, key=f"btn_{key}", disabled=disabled, width="stretch"):
-                                handle_tile_click(day, instructor, max_days, week_days_count)
+                                handle_tile_click(day, instructor, max_days)
 
-                            if selected and st.session_state.get("editing") == key:
+                            if selected and st.session_state.is_admin and st.session_state.get("editing") == key:
                                 default_start_t, default_end_t = default_time_range(day)
+                                
                                 stored_range = st.session_state.get("assigned_time_ranges", {}).get(key, (default_start_t, default_end_t))
                                 
                                 hour_options = []
@@ -408,22 +669,29 @@ for week in cal.monthdatescalendar(month.year, month.month):
                                 if default_start_label not in hour_options:
                                     default_start_label = hour_options[0]
                                 if default_end_label not in hour_options:
-                                    default_end_label = hour_options[-1]
+                                    default_end_label = hour_options[len(hour_options)-1]
 
                                 with st.container():
                                     start_label = st.selectbox(
-                                        "Start Time", options=hour_options, 
-                                        index=hour_options.index(default_start_label), key=f"start_{key}"
+                                        "Start Time", 
+                                        options=hour_options, 
+                                        index=hour_options.index(default_start_label),
+                                        key=f"start_{key}"
                                     )
                                     end_label = st.selectbox(
-                                        "End Time", options=hour_options, 
-                                        index=hour_options.index(default_end_label), key=f"end_{key}"
+                                        "End Time", 
+                                        options=hour_options, 
+                                        index=hour_options.index(default_end_label),
+                                        key=f"end_{key}"
                                     )
+                                    
                                     st.checkbox(
                                         f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
-                                        value=False, key=f"future_{key}"
+                                        value=False, 
+                                        key=f"future_{key}"
                                     )
 
+                                    # --- SINGLE INACTIVE BUTTON (Mathematical 52-Week Step) ---
                                     if st.button("Inactive", key=f"clear_{key}"):
                                         apply_future_key = f"future_{key}"
                                         propagate_future = st.session_state.get(apply_future_key, False)
@@ -440,7 +708,8 @@ for week in cal.monthdatescalendar(month.year, month.month):
                                                     st.session_state.assigned_hours.pop(future_key, None)
                                             st.session_state.pop(apply_future_key, None)
                                         else:
-                                            st.session_state.selected[key] = False
+                                            if f"{day}|{instructor}" in st.session_state.selected:
+                                                st.session_state.selected[f"{day}|{instructor}"] = False
                                             if "assigned_time_ranges" in st.session_state:
                                                 st.session_state.assigned_time_ranges.pop(key, None)
                                             if "assigned_hours" in st.session_state:
@@ -449,6 +718,7 @@ for week in cal.monthdatescalendar(month.year, month.month):
                                                 st.session_state.editing = None
                                                 
                                         save_to_db()
+                                        st.session_state._skip_auto_save = True
                                         st.rerun()
 
                                 start_t = hour_mapping[start_label]
@@ -457,7 +727,9 @@ for week in cal.monthdatescalendar(month.year, month.month):
                                 try:
                                     start_dt = datetime.datetime.combine(datetime.date.today(), start_t)
                                     end_dt = datetime.datetime.combine(datetime.date.today(), end_t)
-                                    hours_int = max(0, round((end_dt - start_dt).total_seconds() / 3600))
+                                    
+                                    diff_seconds = (end_dt - start_dt).total_seconds()
+                                    hours_int = max(0, round(diff_seconds / 3600))
                                 except Exception:
                                     hours_int = assignment_hours(day)
 
@@ -472,30 +744,55 @@ for week in cal.monthdatescalendar(month.year, month.month):
                                         st.session_state.selected[key] = False
                                         if st.session_state.get("editing") == key:
                                             st.session_state.editing = None
-                                    save_to_db()
-                                    st.rerun()
+                                    
+                                    # Prevent double trigger loop on selectbox renders
+                                    if not st.session_state._skip_auto_save:
+                                        save_to_db()
+                                        st.rerun()
                         else:
                             st.button(label, key=f"btn_{key}", disabled=True, width="stretch")
 
-# ---------- ASSIGNMENTS DISPLAY ----------
+# Reset skip flag after full script completion
+st.session_state._skip_auto_save = False
+
+# ---------- ASSIGNMENTS ----------
+
 with st.expander("Assignments"):
-    rows = [
-        {"Date": key.split("|", 1)[0], "Instructor": key.split("|", 1)[1]}
-        for key, selected in st.session_state.selected.items() if selected
-    ]
+    rows = []
+    for key, selected in st.session_state.selected.items():
+        if selected:
+            d, instructor = key.split("|", 1)
+            rows.append({
+                "Date": d,
+                "Instructor": instructor
+            })
+
     if rows:
-        st.dataframe(pd.DataFrame(rows).sort_values(["Date", "Instructor"]), width='stretch')
+        st.dataframe(
+            pd.DataFrame(rows)
+            .sort_values(
+                ["Date", "Instructor"]
+            ),
+            width='stretch'
+        )
+
+# ---------- SAVE / REFRESH ----------
 
 if st.button("Refresh"):
     load_from_db()
     st.rerun()
 
-st.caption("Selected instructors appear first. Weekly totals are shown on every tile.")
+st.caption(
+    "Selected instructors appear first. "
+    "Weekly totals are shown on every tile."
+)
 
-# ---------- ADMIN OVERRIDES & PAY PERIOD ----------
+# ---------- ADMIN OVERRIDES ----------
+
 if st.session_state.is_admin:
     with st.expander("Admin Overrides"):
         st.subheader("Admin Bypass")
+
         if st.session_state.get("admin_bypass"):
             st.success("Admin bypass is ENABLED")
             if st.button("Disable Bypass"):
@@ -512,6 +809,7 @@ if st.session_state.is_admin:
                 if st.button("Enable Bypass"):
                     ADMIN_PASSWORD = ADMIN_PASSWORD or st.secrets.get("ADMIN_PASSWORD")
                     JOSH_PASSWORD = JOSH_PASSWORD or st.secrets.get("JOSH_PASSWORD")
+
                     if bypass_pwd in {ADMIN_PASSWORD, JOSH_PASSWORD}:
                         st.session_state.admin_bypass = True
                         st.success("Admin bypass enabled")
@@ -520,26 +818,48 @@ if st.session_state.is_admin:
                         st.error("Invalid admin password")
 
         override_day = st.date_input("Date")
-        all_instructors = sorted(df["Name"].unique())
-        assigned = sorted([name for name in all_instructors if st.session_state.selected.get(f"{override_day}|{name}", False)])
 
+        all_instructors = sorted(df["Name"].unique())
+
+        assigned = sorted([
+            name
+            for name in all_instructors
+            if st.session_state.selected.get(
+                f"{override_day}|{name}",
+                False
+            )
+        ])
+
+        # SWAP
         st.subheader("Swap Instructor")
         if assigned:
             old_name = st.selectbox("Replace", assigned, key=f"swap_old_{override_day}")
             new_name = st.selectbox("With", all_instructors, key=f"swap_new_{override_day}")
+
             if st.button("Swap", key=f"swap_btn_{override_day}"):
                 old_key = f"{override_day}|{old_name}"
                 new_key = f"{override_day}|{new_name}"
+
                 st.session_state.selected.pop(old_key, None)
                 st.session_state.selected[new_key] = True
-                hrs = st.session_state.get("assigned_hours", {}).pop(old_key, None) or assignment_hours(override_day)
-                st.session_state.assigned_hours[new_key] = int(hrs)
+
+                hrs = st.session_state.get("assigned_hours", {}).pop(old_key, None)
+                if hrs is None:
+                    hrs = assignment_hours(override_day)
+                try:
+                    st.session_state.assigned_hours[new_key] = int(hrs)
+                except Exception:
+                    st.session_state.assigned_hours[new_key] = assignment_hours(override_day)
+
                 save_to_db()
                 st.toast(f"Replaced {old_name} with {new_name}")
+
                 if st.session_state.get("editing") == old_key:
                     st.session_state.editing = new_key
+
                 st.rerun()
 
+        # REMOVE
         st.subheader("Remove Instructor Assignment")
         if assigned:
             remove_name = st.selectbox("Assigned Instructor", assigned, key=f"remove_name_{override_day}")
@@ -554,23 +874,43 @@ if st.session_state.is_admin:
                 st.rerun()
 
         st.divider()
+
+        # ADD
         st.subheader("Add Instructor Assignment")
-        add_name = st.selectbox("Instructor", [i for i in all_instructors if i not in assigned], key=f"add_name_{override_day}")
+        add_name = st.selectbox(
+            "Instructor",
+            [
+                instructor for instructor
+                in all_instructors
+                if instructor not in assigned
+            ],
+            key=f"add_name_{override_day}"
+        )
+
         if st.button("Add Assignment", key=f"add_btn_{override_day}"):
             assignment_key = f"{override_day}|{add_name}"
             if not st.session_state.selected.get(assignment_key, False):
                 st.session_state.selected[assignment_key] = True
-                st.session_state.assigned_hours[assignment_key] = int(assignment_hours(override_day))
+                try:
+                    st.session_state.assigned_hours[assignment_key] = int(assignment_hours(override_day))
+                except Exception:
+                    st.session_state.assigned_hours[assignment_key] = assignment_hours(override_day)
                 save_to_db()
                 st.toast(f"Added {add_name}")
                 st.session_state.editing = assignment_key
                 st.rerun()
 
+# ---------- PAY PERIOD TOTALS ----------
+
 st.divider()
 st.header("Pay Period Totals")
 
-default_start = month.start_time.date() if hasattr(month, "start_time") else pd.Timestamp.now().date()
-default_end = month.end_time.date() if hasattr(month, "end_time") else pd.Timestamp.now().date()
+try:
+    default_start = month.start_time.date()
+    default_end = month.end_time.date()
+except Exception:
+    default_start = pd.Timestamp.now().date()
+    default_end = pd.Timestamp.now().date()
 
 range_start = st.date_input("Start date", value=default_start, key="pay_start_global")
 range_end = st.date_input("End date", value=default_end, key="pay_end_global")
@@ -580,17 +920,30 @@ if range_start > range_end:
 else:
     if st.button("Compute Totals", key="compute_totals_pay"):
         totals = {name: 0 for name in sorted(df["Name"].unique())}
+
         for key, hrs in st.session_state.get("assigned_hours", {}).items():
             try:
                 d_str, instr = key.split("|", 1)
                 d = pd.to_datetime(d_str).date()
             except Exception:
                 continue
+
             if range_start <= d <= range_end:
-                totals[instr] = totals.get(instr, 0) + int(hrs)
-        st.session_state.pay_period_totals = pd.DataFrame(
-            list(totals.items()), columns=["Instructor", "Hours"]
-        ).sort_values("Hours", ascending=False).reset_index(drop=True)
+                try:
+                    totals[instr] = totals.get(instr, 0) + int(hrs)
+                except Exception:
+                    pass
+
+        res = (
+            pd.DataFrame(
+                [(k, v) for k, v in totals.items()],
+                columns=["Instructor", "Hours"]
+            )
+            .sort_values("Hours", ascending=False)
+            .reset_index(drop=True)
+        )
+
+        st.session_state.pay_period_totals = res
 
     if st.session_state.get("pay_period_totals") is not None:
         st.dataframe(st.session_state.pay_period_totals, width=400)
