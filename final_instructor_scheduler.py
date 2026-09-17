@@ -268,7 +268,6 @@ def week_key(dt):
     week_start = (d - pd.Timedelta(days=days_to_subtract)).normalize()
     return f"{week_start.date()}"
 
-# FAST PRE-COMPUTATION LOOKUP (Prevents full-state scanning inside calendar loops)
 def get_weekly_days_map():
     counts = {}
     for key, selected in st.session_state.selected.items():
@@ -436,10 +435,8 @@ for c, d in zip(
 
 cal = calendar.Calendar(firstweekday=6)
 
-# Build pre-computed days map before entering loops
 weekly_days_map = get_weekly_days_map()
 
-# Master set of all instructors from input file/df
 master_instructors = set(df["Name"].unique())
 
 # ---------- CALENDAR ----------
@@ -486,7 +483,6 @@ for week in cal.monthdatescalendar(
                     assigned_names.add(instructor)
 
             if st.session_state.is_admin:
-                # Include all instructors in input pickle file + DB assignments
                 display_names = master_instructors | available_names | cover_names | assigned_names
             else:
                 display_names = assigned_names
@@ -521,6 +517,7 @@ for week in cal.monthdatescalendar(
                     if len(master):
                         info = master.iloc[0].to_dict()
                         info["Date"] = pd.Timestamp(day)
+                        info["cover"] = False
                         rows.append(info)
 
             display_df = pd.DataFrame(rows)
@@ -528,12 +525,21 @@ for week in cal.monthdatescalendar(
             if len(display_df) == 0:
                 continue
 
-            display_df["sort_group"] = display_df["Name"].apply(
-                lambda n: (
-                    0 if st.session_state.selected.get(f"{day}|{n}", False)
-                    else (1 if n not in cover_names else 2)
-                )
-            )
+            # Group ordering:
+            # 0: Active / Selected (Blue)
+            # 1: Available / Not Cover (Gray)
+            # 2: Cover (Light Yellow)
+            # 3: Other Instructors (Pale Orange)
+            def get_sort_group(name):
+                if st.session_state.selected.get(f"{day}|{name}", False):
+                    return 0
+                if name in available_names:
+                    return 1
+                if name in cover_names:
+                    return 2
+                return 3
+
+            display_df["sort_group"] = display_df["Name"].apply(get_sort_group)
 
             display_df = display_df.sort_values(
                 ["sort_group", "Name"],
@@ -558,7 +564,6 @@ for week in cal.monthdatescalendar(
                     if not selected and not st.session_state.is_admin:
                         continue
 
-                    # Instant O(1) Lookup replacing full loop scan
                     wk = week_key(day)
                     week_days = weekly_days_map.get((instructor, wk), 0)
 
@@ -572,8 +577,15 @@ for week in cal.monthdatescalendar(
                         )
                     )
 
-                    is_cover = row.get('cover', False) if isinstance(row, dict) or 'cover' in row else False
-                    bg = ("#00BFFF" if selected else ("#eaeda8" if is_cover else "#d9d9d9"))
+                    group = row["sort_group"]
+                    if group == 0:
+                        bg = "#00BFFF"  # Blue
+                    elif group == 1:
+                        bg = "#d9d9d9"  # Gray
+                    elif group == 2:
+                        bg = "#eaeda8"  # Light Yellow
+                    else:
+                        bg = "#fce4c4"  # Pale Orange
 
                     time_suffix = ""
                     if selected:
