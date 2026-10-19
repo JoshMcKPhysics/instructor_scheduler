@@ -307,7 +307,6 @@ def handle_tile_click(day, instructor, max_days, current_days):
     currently_selected = st.session_state.selected.get(key, False)
 
     if currently_selected and st.session_state.get("editing") == key:
-        # Commit current time selections from widgets silently before closing editor
         hour_mapping = {
             datetime.time(h, 0).strftime("%I:00 %p").lstrip("0"): datetime.time(h, 0)
             for h in range(24)
@@ -417,260 +416,260 @@ name_filter = st.selectbox(
     help="Show only this instructor's tiles (choose All to show everyone)"
 )
 
-# ---------- HEADERS ----------
-headers = st.columns(7)
+# ---------- CALENDAR FRAGMENT ----------
 
-for c, d in zip(
-    headers,
-    ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
-):
-    c.markdown(f"**{d}**")
+@st.fragment
+def render_calendar_grid(month, month_df, master_instructors):
+    headers = st.columns(7)
 
-cal = calendar.Calendar(firstweekday=6)
+    for c, d in zip(
+        headers,
+        ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+    ):
+        c.markdown(f"**{d}**")
 
-weekly_days_map = get_weekly_days_map()
+    cal = calendar.Calendar(firstweekday=6)
+    weekly_days_map = get_weekly_days_map()
 
-master_instructors = set(df["Name"].unique())
+    for week in cal.monthdatescalendar(
+        month.year,
+        month.month
+    ):
 
-# ---------- CALENDAR ----------
+        cols = st.columns(7)
 
-for week in cal.monthdatescalendar(
-    month.year,
-    month.month
-):
+        for col, day in zip(cols, week):
 
-    cols = st.columns(7)
+            with col:
 
-    for col, day in zip(cols, week):
-
-        with col:
-
-            if day.month != month.month:
-                st.empty()
-                continue
-
-            st.markdown(
-                f"**{day.day}**"
-            )
-
-            day_rows = month_df[
-                month_df["Date"].dt.date == day
-            ].copy()
-
-            if day_rows.empty:
-                continue
-
-            if "cover" in day_rows.columns:
-                available_names = set(day_rows[~day_rows['cover']]["Name"])
-                cover_names = set(day_rows[day_rows['cover']]['Name'])
-            else:
-                available_names = set(day_rows["Name"])
-                cover_names = set()
-
-            assigned_names = set()
-
-            for selection_key, selected in st.session_state.selected.items():
-                if not selected:
+                if day.month != month.month:
+                    st.empty()
                     continue
 
-                d, instructor = selection_key.split("|", 1)
+                st.markdown(
+                    f"**{day.day}**"
+                )
 
-                if d == str(day):
-                    assigned_names.add(instructor)
+                day_rows = month_df[
+                    month_df["Date"].dt.date == day
+                ].copy()
 
-            if st.session_state.is_admin:
-                display_names = master_instructors | available_names | cover_names | assigned_names
-            else:
-                display_names = assigned_names
+                if day_rows.empty:
+                    continue
 
-            filter_name = st.session_state.get("name_filter", "All")
-            if filter_name != "All":
-                display_names = {n for n in display_names if n == filter_name}
-
-            if not display_names:
-                continue
-
-            rows = []
-
-            for instructor in display_names:
-
-                match = day_rows[
-                    day_rows["Name"] == instructor
-                ]
-
-                if len(match):
-                    rows.append(
-                        match.iloc[0].to_dict()
-                    )
+                if "cover" in day_rows.columns:
+                    available_names = set(day_rows[~day_rows['cover']]["Name"])
+                    cover_names = set(day_rows[day_rows['cover']]['Name'])
                 else:
-                    master = (
-                        df[
-                            df["Name"] == instructor
-                        ]
-                        .drop_duplicates("Name")
-                    )
+                    available_names = set(day_rows["Name"])
+                    cover_names = set()
 
-                    if len(master):
-                        info = master.iloc[0].to_dict()
-                        info["Date"] = pd.Timestamp(day)
-                        info["cover"] = False
-                        rows.append(info)
+                assigned_names = set()
 
-            display_df = pd.DataFrame(rows)
-
-            if len(display_df) == 0:
-                continue
-
-            def get_sort_group(name):
-                if st.session_state.selected.get(f"{day}|{name}", False):
-                    return 0
-                if name in available_names:
-                    return 1
-                if name in cover_names:
-                    return 2
-                return 3
-
-            display_df["sort_group"] = display_df["Name"].apply(get_sort_group)
-
-            display_df = display_df.sort_values(
-                ["sort_group", "Name"],
-                ascending=[True, True]
-            )
-
-            with st.container(
-                height=DAY_PANEL_HEIGHT
-            ):
-                for _, row in display_df.iterrows():
-                    instructor = row["Name"]
-
-                    try:
-                        max_days = int(row.get("max_days", 5))
-                    except Exception:
-                        max_days = 5
-
-                    key = f"{day}|{instructor}"
-
-                    selected = st.session_state.selected.get(key, False)
-
-                    if not selected and not st.session_state.is_admin:
+                for selection_key, selected in st.session_state.selected.items():
+                    if not selected:
                         continue
 
-                    wk = week_key(day)
-                    week_days = weekly_days_map.get((instructor, wk), 0)
+                    d, instructor = selection_key.split("|", 1)
 
-                    disabled = (
-                        (not st.session_state.is_admin)
-                        and (
-                            not selected
+                    if d == str(day):
+                        assigned_names.add(instructor)
+
+                if st.session_state.is_admin:
+                    display_names = master_instructors | available_names | cover_names | assigned_names
+                else:
+                    display_names = assigned_names
+
+                filter_name = st.session_state.get("name_filter", "All")
+                if filter_name != "All":
+                    display_names = {n for n in display_names if n == filter_name}
+
+                if not display_names:
+                    continue
+
+                rows = []
+
+                for instructor in display_names:
+
+                    match = day_rows[
+                        day_rows["Name"] == instructor
+                    ]
+
+                    if len(match):
+                        rows.append(
+                            match.iloc[0].to_dict()
+                        )
+                    else:
+                        master = (
+                            df[
+                                df["Name"] == instructor
+                            ]
+                            .drop_duplicates("Name")
+                        )
+
+                        if len(master):
+                            info = master.iloc[0].to_dict()
+                            info["Date"] = pd.Timestamp(day)
+                            info["cover"] = False
+                            rows.append(info)
+
+                display_df = pd.DataFrame(rows)
+
+                if len(display_df) == 0:
+                    continue
+
+                def get_sort_group(name):
+                    if st.session_state.selected.get(f"{day}|{name}", False):
+                        return 0
+                    if name in available_names:
+                        return 1
+                    if name in cover_names:
+                        return 2
+                    return 3
+
+                display_df["sort_group"] = display_df["Name"].apply(get_sort_group)
+
+                display_df = display_df.sort_values(
+                    ["sort_group", "Name"],
+                    ascending=[True, True]
+                )
+
+                with st.container(
+                    height=DAY_PANEL_HEIGHT
+                ):
+                    for _, row in display_df.iterrows():
+                        instructor = row["Name"]
+
+                        try:
+                            max_days = int(row.get("max_days", 5))
+                        except Exception:
+                            max_days = 5
+
+                        key = f"{day}|{instructor}"
+
+                        selected = st.session_state.selected.get(key, False)
+
+                        if not selected and not st.session_state.is_admin:
+                            continue
+
+                        wk = week_key(day)
+                        week_days = weekly_days_map.get((instructor, wk), 0)
+
+                        disabled = (
+                            (not st.session_state.is_admin)
                             and (
-                                week_days >= max_days
+                                not selected
+                                and (
+                                    week_days >= max_days
+                                )
                             )
                         )
-                    )
 
-                    group = row["sort_group"]
-                    if group == 0:
-                        bg = "#00BFFF"  # Blue
-                    elif group == 1:
-                        bg = "#d9d9d9"  # Gray
-                    elif group == 2:
-                        bg = "#eaeda8"  # Light Yellow
-                    else:
-                        bg = "#f59a73"  # Pale Orange
-
-                    time_suffix = ""
-                    if selected:
-                        if "assigned_time_ranges" in st.session_state and key in st.session_state.assigned_time_ranges:
-                            r_start, r_end = st.session_state.assigned_time_ranges[key]
+                        group = row["sort_group"]
+                        if group == 0:
+                            bg = "#00BFFF"  # Blue
+                        elif group == 1:
+                            bg = "#d9d9d9"  # Gray
+                        elif group == 2:
+                            bg = "#eaeda8"  # Light Yellow
                         else:
-                            r_start, r_end = default_time_range(day)
-                            
-                        start_h, start_ampm = format_short_time(r_start)
-                        end_h, end_ampm = format_short_time(r_end)
-                        
-                        if start_h and end_h:
-                            if start_ampm == end_ampm:
-                                time_suffix = f" ({start_h}-{end_h}{end_ampm})"
+                            bg = "#f59a73"  # Pale Orange
+
+                        time_suffix = ""
+                        if selected:
+                            if "assigned_time_ranges" in st.session_state and key in st.session_state.assigned_time_ranges:
+                                r_start, r_end = st.session_state.assigned_time_ranges[key]
                             else:
-                                time_suffix = f" ({start_h}{start_ampm}-{end_h}{end_ampm})"
-
-                    label = f"{instructor}{time_suffix}"
-
-                    with stylable_container(key=f"tile_{key}", css_styles=tile_css(bg)):
-                        if st.session_state.is_admin:
-                            if st.button(label, key=f"btn_{key}", disabled=disabled, width="stretch"):
-                                handle_tile_click(day, instructor, max_days, week_days)
-
-                            if selected and st.session_state.is_admin and st.session_state.get("editing") == key:
-                                default_start_t, default_end_t = default_time_range(day)
+                                r_start, r_end = default_time_range(day)
                                 
-                                stored_range = st.session_state.get("assigned_time_ranges", {}).get(key, (default_start_t, default_end_t))
-                                
-                                hour_options = []
-                                for h in range(24):
-                                    t_obj = datetime.time(h, 0)
-                                    label_str = t_obj.strftime("%I:00 %p").lstrip("0")
-                                    hour_options.append(label_str)
+                            start_h, start_ampm = format_short_time(r_start)
+                            end_h, end_ampm = format_short_time(r_end)
+                            
+                            if start_h and end_h:
+                                if start_ampm == end_ampm:
+                                    time_suffix = f" ({start_h}-{end_h}{end_ampm})"
+                                else:
+                                    time_suffix = f" ({start_h}{start_ampm}-{end_h}{end_ampm})"
 
-                                default_start_label = stored_range[0].strftime("%I:00 %p").lstrip("0")
-                                default_end_label = stored_range[1].strftime("%I:00 %p").lstrip("0")
-                                
-                                if default_start_label not in hour_options:
-                                    default_start_label = hour_options[0]
-                                if default_end_label not in hour_options:
-                                    default_end_label = hour_options[len(hour_options)-1]
+                        label = f"{instructor}{time_suffix}"
 
-                                with st.container():
-                                    # Selectboxes updated silently without callbacks or immediate auto-saves
-                                    start_label = st.selectbox(
-                                        "Start Time", 
-                                        options=hour_options, 
-                                        index=hour_options.index(default_start_label),
-                                        key=f"start_{key}"
-                                    )
-                                    end_label = st.selectbox(
-                                        "End Time", 
-                                        options=hour_options, 
-                                        index=hour_options.index(default_end_label),
-                                        key=f"end_{key}"
-                                    )
+                        with stylable_container(key=f"tile_{key}", css_styles=tile_css(bg)):
+                            if st.session_state.is_admin:
+                                if st.button(label, key=f"btn_{key}", disabled=disabled, width="stretch"):
+                                    handle_tile_click(day, instructor, max_days, week_days)
+
+                                if selected and st.session_state.is_admin and st.session_state.get("editing") == key:
+                                    default_start_t, default_end_t = default_time_range(day)
                                     
-                                    st.checkbox(
-                                        f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
-                                        value=False, 
-                                        key=f"future_{key}"
-                                    )
+                                    stored_range = st.session_state.get("assigned_time_ranges", {}).get(key, (default_start_t, default_end_t))
+                                    
+                                    hour_options = []
+                                    for h in range(24):
+                                        t_obj = datetime.time(h, 0)
+                                        label_str = t_obj.strftime("%I:00 %p").lstrip("0")
+                                        hour_options.append(label_str)
 
-                                    if st.button("Inactive", key=f"clear_{key}"):
-                                        apply_future_key = f"future_{key}"
-                                        propagate_future = st.session_state.get(apply_future_key, False)
+                                    default_start_label = stored_range[0].strftime("%I:00 %p").lstrip("0")
+                                    default_end_label = stored_range[1].strftime("%I:00 %p").lstrip("0")
+                                    
+                                    if default_start_label not in hour_options:
+                                        default_start_label = hour_options[0]
+                                    if default_end_label not in hour_options:
+                                        default_end_label = hour_options[len(hour_options)-1]
+
+                                    with st.container():
+                                        start_label = st.selectbox(
+                                            "Start Time", 
+                                            options=hour_options, 
+                                            index=hour_options.index(default_start_label),
+                                            key=f"start_{key}"
+                                        )
+                                        end_label = st.selectbox(
+                                            "End Time", 
+                                            options=hour_options, 
+                                            index=hour_options.index(default_end_label),
+                                            key=f"end_{key}"
+                                        )
                                         
-                                        if propagate_future:
-                                            base_date = pd.Timestamp(day)
-                                            for i in range(52):
-                                                row_date = base_date + pd.Timedelta(weeks=i)
-                                                future_key = f"{row_date.date()}|{instructor}"
-                                                st.session_state.selected[future_key] = False
-                                                if "assigned_time_ranges" in st.session_state:
-                                                    st.session_state.assigned_time_ranges.pop(future_key, None)
-                                                if "assigned_hours" in st.session_state:
-                                                    st.session_state.assigned_hours.pop(future_key, None)
-                                            st.session_state.pop(apply_future_key, None)
-                                        else:
-                                            if f"{day}|{instructor}" in st.session_state.selected:
-                                                st.session_state.selected[f"{day}|{instructor}"] = False
-                                            if "assigned_time_ranges" in st.session_state:
-                                                st.session_state.assigned_time_ranges.pop(key, None)
-                                            if "assigned_hours" in st.session_state:
-                                                st.session_state.assigned_hours.pop(key, None)
-                                            if st.session_state.get("editing") == key:
-                                                st.session_state.editing = None
-                                                
-                                        save_to_db()
-                                        st.rerun()
+                                        st.checkbox(
+                                            f"Apply to all future {pd.Timestamp(day).strftime('%A')}s", 
+                                            value=False, 
+                                            key=f"future_{key}"
+                                        )
 
-                        else:
-                            st.button(label, key=f"btn_{key}", disabled=True, width="stretch")
+                                        if st.button("Inactive", key=f"clear_{key}"):
+                                            apply_future_key = f"future_{key}"
+                                            propagate_future = st.session_state.get(apply_future_key, False)
+                                            
+                                            if propagate_future:
+                                                base_date = pd.Timestamp(day)
+                                                for i in range(52):
+                                                    row_date = base_date + pd.Timedelta(weeks=i)
+                                                    future_key = f"{row_date.date()}|{instructor}"
+                                                    st.session_state.selected[future_key] = False
+                                                    if "assigned_time_ranges" in st.session_state:
+                                                        st.session_state.assigned_time_ranges.pop(future_key, None)
+                                                    if "assigned_hours" in st.session_state:
+                                                        st.session_state.assigned_hours.pop(future_key, None)
+                                                st.session_state.pop(apply_future_key, None)
+                                            else:
+                                                if f"{day}|{instructor}" in st.session_state.selected:
+                                                    st.session_state.selected[f"{day}|{instructor}"] = False
+                                                if "assigned_time_ranges" in st.session_state:
+                                                    st.session_state.assigned_time_ranges.pop(key, None)
+                                                if "assigned_hours" in st.session_state:
+                                                    st.session_state.assigned_hours.pop(key, None)
+                                                if st.session_state.get("editing") == key:
+                                                    st.session_state.editing = None
+                                                    
+                                            save_to_db()
+                                            st.rerun()
+
+                            else:
+                                st.button(label, key=f"btn_{key}", disabled=True, width="stretch")
+
+# Render the isolated calendar fragment grid
+render_calendar_grid(month, month_df, master_instructors=set(df["Name"].unique()))
 
 # ---------- ASSIGNMENTS ----------
 
