@@ -296,40 +296,6 @@ def tile_css(bg):
     }}
     """
 
-# ---------- TIME SELECTBOX CALLBACK ----------
-
-def on_time_range_change(key, day):
-    hour_mapping = {
-        datetime.time(h, 0).strftime("%I:00 %p").lstrip("0"): datetime.time(h, 0)
-        for h in range(24)
-    }
-    start_label = st.session_state.get(f"start_{key}")
-    end_label = st.session_state.get(f"end_{key}")
-
-    if start_label and end_label:
-        start_t = hour_mapping[start_label]
-        end_t = hour_mapping[end_label]
-
-        if "assigned_time_ranges" not in st.session_state:
-            st.session_state.assigned_time_ranges = {}
-        st.session_state.assigned_time_ranges[key] = (start_t, end_t)
-
-        try:
-            start_dt = datetime.datetime.combine(datetime.date.today(), start_t)
-            end_dt = datetime.datetime.combine(datetime.date.today(), end_t)
-            hours_int = max(0, round((end_dt - start_dt).total_seconds() / 3600))
-        except Exception:
-            hours_int = assignment_hours(day)
-
-        current_stored_hrs = int(st.session_state.get("assigned_hours", {}).get(key, assignment_hours(day)))
-        if hours_int != current_stored_hrs:
-            st.session_state.assigned_hours[key] = hours_int
-            if hours_int == 0:
-                st.session_state.selected[key] = False
-                if st.session_state.get("editing") == key:
-                    st.session_state.editing = None
-            save_to_db()
-
 # ---------- TOGGLE / CLICK HANDLERS ----------
 
 def handle_tile_click(day, instructor, max_days, current_days):
@@ -341,6 +307,33 @@ def handle_tile_click(day, instructor, max_days, current_days):
     currently_selected = st.session_state.selected.get(key, False)
 
     if currently_selected and st.session_state.get("editing") == key:
+        # Commit current time selections from widgets silently before closing editor
+        hour_mapping = {
+            datetime.time(h, 0).strftime("%I:00 %p").lstrip("0"): datetime.time(h, 0)
+            for h in range(24)
+        }
+        start_label = st.session_state.get(f"start_{key}")
+        end_label = st.session_state.get(f"end_{key}")
+
+        if start_label and end_label:
+            start_t = hour_mapping[start_label]
+            end_t = hour_mapping[end_label]
+
+            if "assigned_time_ranges" not in st.session_state:
+                st.session_state.assigned_time_ranges = {}
+            st.session_state.assigned_time_ranges[key] = (start_t, end_t)
+
+            try:
+                start_dt = datetime.datetime.combine(datetime.date.today(), start_t)
+                end_dt = datetime.datetime.combine(datetime.date.today(), end_t)
+                hours_int = max(0, round((end_dt - start_dt).total_seconds() / 3600))
+            except Exception:
+                hours_int = assignment_hours(day)
+
+            st.session_state.assigned_hours[key] = hours_int
+            if hours_int == 0:
+                st.session_state.selected[key] = False
+
         st.session_state.editing = None
         
         apply_future_key = f"future_{key}"
@@ -464,7 +457,6 @@ for week in cal.monthdatescalendar(
                 month_df["Date"].dt.date == day
             ].copy()
 
-            # Skip rendering any tiles if the day is closed (no rows in input data)
             if day_rows.empty:
                 continue
 
@@ -529,11 +521,6 @@ for week in cal.monthdatescalendar(
             if len(display_df) == 0:
                 continue
 
-            # Group ordering:
-            # 0: Active / Selected (Blue)
-            # 1: Available / Not Cover (Gray)
-            # 2: Cover (Light Yellow)
-            # 3: Other Instructors (Pale Orange)
             def get_sort_group(name):
                 if st.session_state.selected.get(f"{day}|{name}", False):
                     return 0
@@ -634,21 +621,18 @@ for week in cal.monthdatescalendar(
                                     default_end_label = hour_options[len(hour_options)-1]
 
                                 with st.container():
+                                    # Selectboxes updated silently without callbacks or immediate auto-saves
                                     start_label = st.selectbox(
                                         "Start Time", 
                                         options=hour_options, 
                                         index=hour_options.index(default_start_label),
-                                        key=f"start_{key}",
-                                        on_change=on_time_range_change,
-                                        args=(key, day)
+                                        key=f"start_{key}"
                                     )
                                     end_label = st.selectbox(
                                         "End Time", 
                                         options=hour_options, 
                                         index=hour_options.index(default_end_label),
-                                        key=f"end_{key}",
-                                        on_change=on_time_range_change,
-                                        args=(key, day)
+                                        key=f"end_{key}"
                                     )
                                     
                                     st.checkbox(
