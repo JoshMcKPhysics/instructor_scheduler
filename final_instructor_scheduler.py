@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_FILE = BASE_DIR / "instructor_dates.pkl"
 DATA_CSV = BASE_DIR / "data.csv"
 
-DAY_PANEL_HEIGHT = 220
+DAY_PANEL_HEIGHT = 215
 
 
 def default_time_range(dt):
